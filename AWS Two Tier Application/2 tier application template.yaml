@@ -1,0 +1,403 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Case study in which we are deploying our PHP & Apache web aplication in EC2 instance.
+  EC2 instance resides in public subnet while the linked RDS instance resides in private subnet.
+
+Parameters:
+  VPCCIDRBlock:
+    Type: String
+    Default: 172.20.0.0/20
+
+  AZ1:
+    Type: String
+    Default: us-east-1a
+
+  PublicSubnetCIDRBlock1:
+    Type: String
+    Default: 172.20.1.0/24
+  
+  PublicSubnetCIDRBlock2:
+    Type: String
+    Default: 172.20.2.0/24
+    
+  AZ2:
+    Type: String
+    Default: us-east-1b
+
+  PrivateSubnetCIDRBlock1:
+    Type: String
+    Default: 172.20.3.0/24
+
+  PrivateSubnetCIDRBlock2:
+    Type: String
+    Default: 172.20.4.0/24
+
+  KeyName: 
+    Type: AWS::EC2::KeyPair::KeyName
+
+Resources:
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Description: VPC for deploying the application
+    Properties: 
+      CidrBlock: !Ref VPCCIDRBlock
+      Tags: 
+        - 
+            Key: Name
+            Value: MyVPC
+
+# Subnets ---        
+  MyPublicAppSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: !Ref AZ1
+      CidrBlock: !Ref PublicSubnetCIDRBlock1
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - 
+            Key: Name
+            Value: MyPublicAppSubnet1
+      VpcId: !Ref MyVPC
+
+  MyPublicAppSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: !Ref AZ2
+      CidrBlock: !Ref PublicSubnetCIDRBlock2
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - 
+            Key: Name
+            Value: MyPublicAppSubnet2
+      VpcId: !Ref MyVPC
+
+  MyPrivateRDSSubnet1: 
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: !Ref AZ1
+      CidrBlock: !Ref PrivateSubnetCIDRBlock1
+      MapPublicIpOnLaunch: false
+      Tags: 
+        - 
+            Key: Name
+            Value: MyPrivateRDSSubnet1
+      VpcId: !Ref MyVPC
+
+  MyPrivateRDSSubnet2: 
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: !Ref AZ2
+      CidrBlock: !Ref PrivateSubnetCIDRBlock2
+      MapPublicIpOnLaunch: false
+      Tags: 
+        - 
+            Key: Name
+            Value: MyPrivateRDSSubnet2
+      VpcId: !Ref MyVPC
+
+# Route tables ---
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      Tags: 
+        - 
+            Key: Name
+            Value: PublicRouteTable
+      VpcId: !Ref MyVPC
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      Tags: 
+        - 
+            Key: Name
+            Value: PrivateRouteTable
+      VpcId: !Ref MyVPC
+
+# Internet route for the public route table ---
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties: 
+      Tags: 
+        - 
+            Key: Name
+            Value: InternetGateway
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: 
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref MyVPC
+      
+  InternetRoute:
+    Type: AWS::EC2::Route 
+    DependsOn:
+      - VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      GatewayId: !Ref InternetGateway
+      DestinationCidrBlock: 0.0.0.0/0  
+
+# Subnet - Route table associations ---    
+  PublicSubnetRouteTableAssoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref MyPublicAppSubnet1
+
+  PublicSubnetRouteTableAssoc2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref MyPublicAppSubnet2
+
+  PrivateSubnetRouteTableAssoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref MyPrivateRDSSubnet1
+
+  PrivateSubnetRouteTableAssoc2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref MyPrivateRDSSubnet2
+
+# Security Group ---
+  ApplicationServerSG:
+    Type: AWS::EC2::SecurityGroup 
+    Properties:
+      GroupDescription: Aplication Server Security Group 
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        # SSH rule
+        -
+          CidrIp: 0.0.0.0/0 
+          IpProtocol: tcp
+          FromPort: 22 
+          ToPort: 22
+        - 
+          CidrIp: 0.0.0.0/0 
+          IpProtocol: tcp
+          FromPort: 80 
+          ToPort: 80
+
+  ALBSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Security Group for ALB"
+      Tags: 
+        - 
+          Key: Name
+          Value: ALBSecurityGroup
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress: 
+        - 
+          CidrIp: "0.0.0.0/0"
+          FromPort: 80
+          IpProtocol: "tcp"
+          ToPort: 80
+          
+  DBSecurityGroup:
+    Type: AWS::RDS::DBSecurityGroup
+    Properties:
+      DBSecurityGroupIngress:
+        EC2SecurityGroupId:
+          !GetAtt ApplicationServerSG.GroupId
+      GroupDescription: "Security Group for RDS"
+      Tags: 
+        - 
+          Key: Name
+          Value: DBSecurityGroup
+      EC2VpcId: !Ref MyVPC
+      
+
+# Application and RDS server ---
+  ApplicationServer1:
+    Type: AWS::EC2::Instance
+    Properties: 
+      AvailabilityZone: !Ref AZ1
+      ImageId: ami-0022f774911c1d690
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SecurityGroupIds: 
+        - !Ref ApplicationServerSG
+      SubnetId: !Ref MyPublicAppSubnet1
+      Tags: 
+        - 
+            Key: Name
+            Value: ApplicationServer1
+      UserData:
+        Fn::Base64: !Sub |
+            #!/bin/bash
+            sudo yum update -y
+            sudo amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+            sudo yum install -y httpd 
+            sudo systemctl start httpd
+            sudo systemctl enable httpd
+            sudo systemctl is-enabled httpd
+            sudo usermod -a -G apache ec2-user
+            #exit 
+            groups
+            sudo chown -R ec2-user:apache /var/www
+            sudo chmod 2775 /var/www && find /var/www -type d -exec sudo chmod 2775 {} \;
+            find /var/www -type f -exec sudo chmod 0664 {} \;
+            sudo yum install php-mbstring php-xml -y
+            sudo systemctl restart httpd
+            sudo systemctl restart php-fpm
+            cd /var/www/html
+            wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.tar.gz
+            mkdir phpMyAdmin && tar -xvzf phpMyAdmin-latest-all-languages.tar.gz -C phpMyAdmin --strip-components 1
+            rm phpMyAdmin-latest-all-languages.tar.gz 
+            echo "<!DOCTYPE html><html><body><center><h1>Welcome to our 2 Tier Application :)</h1></center><p>I just demonstarted a 2 Tier Application where our web server is deployed inside public subnets and our database resides in private subnet.</p><p>Below we can see the AWS architecture for our case study : </p><center><img src="https://cloudfromationdemo.s3.eu-west-1.amazonaws.com/2+tier+app+architecture.png" alt="Architecture" width="700" height="600"></center></body></html>" > index.html
+
+  ApplicationServer2:
+    Type: AWS::EC2::Instance
+    Properties: 
+      AvailabilityZone: !Ref AZ2
+      ImageId: ami-0022f774911c1d690
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SecurityGroupIds: 
+        - !Ref ApplicationServerSG
+      SubnetId: !Ref MyPublicAppSubnet2
+      Tags: 
+        - 
+            Key: Name
+            Value: ApplicationServer2
+      UserData:
+        Fn::Base64: !Sub |
+            #!/bin/bash
+            sudo yum update -y
+            sudo amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+            sudo yum install -y httpd 
+            sudo systemctl start httpd
+            sudo systemctl enable httpd
+            sudo systemctl is-enabled httpd
+            sudo usermod -a -G apache ec2-user
+            #exit 
+            groups
+            sudo chown -R ec2-user:apache /var/www
+            sudo chmod 2775 /var/www && find /var/www -type d -exec sudo chmod 2775 {} \;
+            find /var/www -type f -exec sudo chmod 0664 {} \;
+            sudo yum install php-mbstring php-xml -y
+            sudo systemctl restart httpd
+            sudo systemctl restart php-fpm
+            cd /var/www/html
+            wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.tar.gz
+            mkdir phpMyAdmin && tar -xvzf phpMyAdmin-latest-all-languages.tar.gz -C phpMyAdmin --strip-components 1
+            rm phpMyAdmin-latest-all-languages.tar.gz 
+            echo "<!DOCTYPE html><html><body><center><h1>Welcome to our 2 Tier Application :)</h1></center><p>I just demonstarted a 2 Tier Application where our web server is deployed inside public subnets and our database resides in private subnet.</p><p>Below we can see the AWS architecture for our case study : </p><center><img src="https://cloudfromationdemo.s3.eu-west-1.amazonaws.com/2+tier+app+architecture.png" alt="Architecture" width="700" height="600"></center></body></html>" > index.html
+
+            
+
+# Target Group, Listener and Application  Load Balancer ---
+  EC2TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 15
+      HealthyThresholdCount: 5
+      Matcher:
+        HttpCode: '200'
+      Name: EC2TargetGroup
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - 
+          Key: deregistration_delay.timeout_seconds
+          Value: '20'
+        - 
+          Key: stickiness.enabled
+          Value: true
+        - 
+          Key: stickiness.type
+          Value: lb_cookie
+      Targets:
+      - Id: !Ref ApplicationServer1
+        Port: 80
+      - Id: !Ref ApplicationServer2
+        Port: 80
+      UnhealthyThresholdCount: 3
+      VpcId: !Ref MyVPC
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref EC2TargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+      - !Ref MyPublicAppSubnet1
+      - !Ref MyPublicAppSubnet2
+      SecurityGroups:
+        - !GetAtt ALBSecurityGroup.GroupId
+
+# RDS instance ---
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties: 
+      DBSubnetGroupDescription: Private subnets associated to RDS
+      DBSubnetGroupName: !Sub "${AWS::Region}-aws-dxl-database-subnet-group"
+      SubnetIds: 
+        - 
+          !Ref MyPrivateRDSSubnet1
+        -
+          !Ref MyPrivateRDSSubnet2
+      Tags: 
+        - 
+          Key: Name
+          Value: RDSSubnetGroup
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties: 
+      AllocatedStorage: 20
+      DBInstanceClass: db.t2.micro
+      DBSecurityGroups:
+        - Ref: DBSecurityGroup
+      DBName: RDSInstance
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      Engine: MYSQL
+      MasterUsername: admin
+      MasterUserPassword: password
+      MonitoringInterval: 60  
+      MultiAZ: true
+      Port: 3306
+      PubliclyAccessible: false
+      StorageType: gp2
+      Tags: 
+        - 
+          Key: Name
+          Value: RDSInstance
+      
+Outputs:
+  LoadBalancerDNSName:
+    Description: The DNSName of the application load balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    
+  ALBTargetGroup:
+    Description: Target Group under ALB
+    Value: !GetAtt EC2TargetGroup.TargetGroupFullName
+
+  RDSInstanceID:
+    Description: The RDS Instance ID
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  ApplicationServer1DNS:
+    Description: DNS name of Aplication Server 1
+    Value: !GetAtt ApplicationServer1.PublicDnsName
+
+  ApplicationServer2DNS:
+    Description: DNS name of Aplication Server 2
+    Value: !GetAtt ApplicationServer2.PublicDnsName
+
